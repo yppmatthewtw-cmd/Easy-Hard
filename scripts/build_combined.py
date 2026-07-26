@@ -18,6 +18,7 @@ from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.properties import PageSetupProperties
 
 UPLOADS = "/root/.claude/uploads/217becff-8454-5f9a-a065-0284fc958152"
 SRC = {
@@ -36,7 +37,7 @@ SCORE_COL = {"A": "AX", "B": "Q", "C": "AG"}
 DAILY = "02A_每日分段"
 
 FIRST, LAST = 5, 2519          # data rows on every 02A sheet
-RUN_ROWS = 700                 # capacity of the run table (301 runs today; J3 warns if exceeded)
+RUN_ROWS = 400                 # capacity of the run table (301 runs today; N3 warns if exceeded)
 OUT = "/home/user/Easy-Hard/EasyHardMoney_NDX_2026R4.5.3_COMBINED_ABC.xlsx"
 
 # --- shared look, taken from the source workbooks -------------------------
@@ -197,17 +198,21 @@ title(
     d,
     "整合判區 (A∩B∩C) | 三引擎同時 EASY 才 EASY, 同時 HARD 才 HARD, 其餘一律 UNCERTAIN",
     "N欄=整合判區(唯一結論)。G/I/K欄為A/B/C三引擎原始判區, 由各自原表活算帶入; "
-    "F/H/J欄為三引擎原始加權合成分。P欄逐日核對三表日期對齊。",
+    "F/H/J欄為三引擎原始加權合成分。P欄逐日核對三表日期對齊。"
+    "Q/R 為灰底輔助欄, 只供 07_整合區間 定位每段區間的起訖列, 不是分析數據。",
 )
 head(
     d, 4,
     ["交易日#", "日期", "年份", "週內", "NDX收盤",
      "A分數", "A判區", "B分數", "B判區", "C分數", "C判區",
-     "EASY票數", "HARD票數", "整合判區", "三方一致?", "日期對齊", "區間起點", "區間編號"],
+     "EASY票數", "HARD票數", "整合判區", "三方一致?", "日期對齊",
+     "區間起點(輔助)", "區間編號(輔助)"],
     [8, 12, 6, 5, 11, 8, 11, 8, 11, 8, 11, 9, 9, 12, 9, 9, 9, 9],
 )
 d.freeze_panes = "C5"
-d.auto_filter.ref = f"A4:R{LAST}"
+d.auto_filter.ref = f"A4:P{LAST}"      # the two helper columns stay out of the filter
+for _c in ("Q4", "R4"):
+    d[_c].fill = PatternFill("solid", fgColor="808080")
 
 for r in range(FIRST, LAST + 1):
     f = {
@@ -384,9 +389,9 @@ for col in "ABC":
     m[f"{col}{r}"].font = F_BOLD
     m[f"{col}{r}"].border = BOX
 
-m["A10"] = "投票分布 (三引擎中有幾票)"
+m["A10"] = "投票分布 — 三引擎中恰有 N 票判為 EASY / HARD 的日數"
 m["A10"].font = F_KEY
-head(m, 11, ["票數", "EASY 票數為此值的日數", "佔比", "HARD 票數為此值的日數", "佔比", "", ""])
+head(m, 11, ["票數", "EASY 日數", "佔比", "HARD 日數", "佔比", "", ""])
 for v in range(4):
     r = 12 + v
     m[f"A{r}"] = v
@@ -437,8 +442,8 @@ for pair_name, x, y in (("A (列) × B (欄)", GR, IR),
 print("building 07_整合區間 ...")
 p = wb.create_sheet("07_整合區間")
 title(p, "整合判區連續區間 (由 01_整合判區 R欄區間編號活算)",
-      "每段列出區制、起訖日、交易日數與期間 NDX 報酬。表格列數固定, 但顯示幾段隨 J2 的實際"
-      "區間數自動增減; 若來源改動後段數超出容量, J3 會出現警告。")
+      "每段列出區制、起訖日、交易日數與期間 NDX 報酬。顯示幾段由 N2 的實際區間數活算決定, "
+      "多餘列自動留白; 若來源改動後段數超出表格容量, N3 會出現警告。")
 head(p, 4, ["區間#", "區制", "起始日", "結束日", "交易日數", "起始NDX", "結束NDX",
             "期內報酬%(首收→末收)", "含首日報酬%(前收→末收)",
             "", "起始列(輔助)", "結束列(輔助)"],
@@ -521,7 +526,10 @@ rows = [
     ("工作表",
      "00_README_整合 | 01_整合判區(主表, 2515日) | 05_整合統計摘要 | 06_三方比對 | 07_整合區間 | "
      "A_*(6張, Fable原檔) | B_*(9張, Sol原檔) | C_*(7張, Grok原檔)"),
-    ("顏色", "綠=EASY | 黃=UNCERTAIN | 紅=HARD (沿用三個來源檔的原有配色)"),
+    ("顏色",
+     "綠=EASY (C6EFCE) | 黃=UNCERTAIN (FFEB9C) | 紅=HARD (FFC7CE)。三個來源檔本身對 UNCERTAIN "
+     "的黃色並不一致 (B 與 C 用 FFEB9C, A 自己的 Y 欄用較深的 FFE699); 整合表採用三取二的 "
+     "FFEB9C, 各來源原表則一律保留其原有顏色不動。"),
     ("哪些會自動重算",
      "四張整合表(01/05/06/07)全部為活公式, 不含寫死結果。來源方面: A 原檔帶 65,479 條活公式、"
      "B 原檔帶 23,634 條, 改動它們的輸入格會一路更新到整合判區; 但 C 原檔本身就只有數值、"
@@ -555,6 +563,18 @@ for i, zone in enumerate(ZONES):
 # =========================================================================
 # 8. Sheet order: combined first, then A_*, B_*, C_*
 # =========================================================================
+# The A_* sheets arrive with page setup; give the new ones the same courtesy so
+# the long tables print with a repeating header instead of naked columns.
+for _name, _landscape, _repeat in (("00_README_整合", False, None), ("01_整合判區", True, "4:4"),
+                                   ("05_整合統計摘要", False, None), ("06_三方比對", False, None),
+                                   ("07_整合區間", True, "4:4")):
+    _sh = wb[_name]
+    _sh.page_setup.orientation = "landscape" if _landscape else "portrait"
+    _sh.page_setup.fitToWidth, _sh.page_setup.fitToHeight = 1, 0
+    _sh.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    if _repeat:
+        _sh.print_title_rows = _repeat
+
 front = ["00_README_整合", "01_整合判區", "05_整合統計摘要", "06_三方比對", "07_整合區間"]
 order = front + [n for n in wb.sheetnames if n not in front]
 wb._sheets = [wb[n] for n in order]
