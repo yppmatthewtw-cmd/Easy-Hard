@@ -77,6 +77,14 @@ def head(ws, row, labels, widths=None):
             ws.column_dimensions[get_column_letter(i)].width = w
 
 
+NDAYS = None          # set once the sheet layout constants are known
+
+
+def over_days(numerator):
+    """numerator / trading-day count, blank rather than #DIV/0! on an empty table."""
+    return f'=IF({NDAYS}=0,"",{numerator}/{NDAYS})'
+
+
 def title(ws, text, note=None):
     c = ws.cell(row=1, column=1, value=text)
     c.font = F_TITLE
@@ -256,6 +264,7 @@ print("building 05_整合統計摘要 ...")
 s = wb.create_sheet("05_整合統計摘要")
 NRNG = f"'01_整合判區'!$N${FIRST}:$N${LAST}"
 YRNG = f"'01_整合判區'!$C${FIRST}:$C${LAST}"
+NDAYS = f"COUNT('01_整合判區'!$A${FIRST}:$A${LAST})"
 title(s, "整合統計摘要 (全部為活公式, 隨來源表重算)",
       "整合判區 = A∩B∩C。三引擎判區分歧時一律歸 UNCERTAIN, 故整合 EASY/HARD 必然少於任一單一引擎。")
 for i, w in enumerate([26, 12, 11, 12, 11, 12, 11, 12, 11], start=1):
@@ -283,12 +292,12 @@ for i, zone in enumerate(("EASY", "UNCERTAIN", "HARD")):
     s[f"A{r}"].font = F_BOLD
     s[f"A{r}"].alignment = CENTER
     s[f"B{r}"] = f'=COUNTIF({NRNG},$A{r})'
-    s[f"C{r}"] = f"=$B{r}/COUNT('01_整合判區'!$A${FIRST}:$A${LAST})"
+    s[f"C{r}"] = over_days(f"$B{r}")
     for j, col in enumerate("GIK"):
         vc = get_column_letter(4 + j * 2)
         pc = get_column_letter(5 + j * 2)
         s[f"{vc}{r}"] = f"=COUNTIF('01_整合判區'!${col}${FIRST}:${col}${LAST},$A{r})"
-        s[f"{pc}{r}"] = f"=${vc}{r}/COUNT('01_整合判區'!$A${FIRST}:$A${LAST})"
+        s[f"{pc}{r}"] = over_days(f"${vc}{r}")
     for col in "BDFH":
         s[f"{col}{r}"].number_format = "#,##0"
     for col in "CEGI":
@@ -332,7 +341,7 @@ for col in "BCDE":
     s[f"{col}{r}"].number_format = "#,##0"
     s[f"{col}{r}"].font = F_BOLD
     s[f"{col}{r}"].alignment = CENTER
-s[f"F{r}"] = f"=$B{r}/$E{r}"
+s[f"F{r}"] = f'=IF($E{r}=0,"",$B{r}/$E{r})'
 s[f"F{r}"].number_format = "0.0%"
 s[f"F{r}"].font = F_BOLD
 s[f"F{r}"].alignment = CENTER
@@ -358,7 +367,7 @@ for i, (name, x, y) in enumerate((("A 與 B", GR, IR), ("A 與 C", GR, KR), ("B 
     r = 5 + i
     m[f"A{r}"] = name
     m[f"B{r}"] = f"=SUMPRODUCT(--({x}={y}))"
-    m[f"C{r}"] = f"=$B{r}/{NDAYS}"
+    m[f"C{r}"] = over_days(f"$B{r}")
     m[f"B{r}"].number_format = "#,##0"
     m[f"C{r}"].number_format = "0.0%"
     for col in "ABC":
@@ -368,7 +377,7 @@ r = 8
 m[f"A{r}"] = "三方完全一致"
 m[f"A{r}"].font = F_BOLD
 m[f"B{r}"] = f"=SUMPRODUCT(--({GR}={IR}),--({IR}={KR}))"
-m[f"C{r}"] = f"=$B{r}/{NDAYS}"
+m[f"C{r}"] = over_days(f"$B{r}")
 m[f"B{r}"].number_format = "#,##0"
 m[f"C{r}"].number_format = "0.0%"
 for col in "ABC":
@@ -382,9 +391,9 @@ for v in range(4):
     r = 12 + v
     m[f"A{r}"] = v
     m[f"B{r}"] = f"=COUNTIF('01_整合判區'!$L${FIRST}:$L${LAST},$A{r})"
-    m[f"C{r}"] = f"=$B{r}/{NDAYS}"
+    m[f"C{r}"] = over_days(f"$B{r}")
     m[f"D{r}"] = f"=COUNTIF('01_整合判區'!$M${FIRST}:$M${LAST},$A{r})"
-    m[f"E{r}"] = f"=$D{r}/{NDAYS}"
+    m[f"E{r}"] = over_days(f"$D{r}")
     for col in "BD":
         m[f"{col}{r}"].number_format = "#,##0"
     for col in "CE":
@@ -538,8 +547,8 @@ for i, zone in enumerate(ZONES):
     rr = r + 2 + i
     rd.cell(row=rr, column=1, value=zone).font = F_BOLD
     c = rd.cell(row=rr, column=2)
-    c.value = (f'=COUNTIF({NRNG},$A{rr})&" 個交易日 ("'
-               f'&TEXT(COUNTIF({NRNG},$A{rr})/{NDAYS},"0.0%")&")"')
+    c.value = (f'=IF({NDAYS}=0,"",COUNTIF({NRNG},$A{rr})&" 個交易日 ("'
+               f'&TEXT(COUNTIF({NRNG},$A{rr})/{NDAYS},"0.0%")&")")')
     c.font = F_BODY
 
 
