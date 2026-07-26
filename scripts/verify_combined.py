@@ -28,12 +28,15 @@ def check(label, ok, detail=""):
 # ---- 1. ground truth straight from the untouched uploads -----------------
 print("== re-deriving ground truth from the original uploads ==")
 truth = {}
+src_raw = {}
 dates = {}
 scores = {}
 for k, (path, zcol, scol) in SRC.items():
     wb = load_workbook(path, data_only=True)
     ws = wb["02A_每日分段"]
     truth[k] = [ws[f"{zcol}{r}"].value for r in range(FIRST, LAST + 1)]
+    src_raw[k] = {c: [ws[f"{c}{r}"].value for r in range(FIRST, LAST + 1)]
+                  for c in ("E", "F", "G", "H", "I", "K")}
     scores[k] = [ws[f"{scol}{r}"].value for r in range(FIRST, LAST + 1)]
     dates[k] = [ws[f"B{r}"].value for r in range(FIRST, LAST + 1)]
     wb.close()
@@ -184,6 +187,7 @@ check("05 摘要 日期對齊 status is OK", s["B5"].value == "全部對齊 OK",
 yr = defaultdict(Counter)
 for i in range(n):
     yr[dates["A"][i].year][expected[i]] += 1
+YEAR_TOTAL_ROW = 35
 for i, year in enumerate(range(2016, 2027)):
     r = 15 + i
     ok = (s[f"B{r}"].value == yr[year]["EASY"]
@@ -192,7 +196,40 @@ for i, year in enumerate(range(2016, 2027)):
     check(f"05 摘要 year {year} row", ok,
           f"got {(s[f'B{r}'].value, s[f'C{r}'].value, s[f'D{r}'].value)} "
           f"expected {(yr[year]['EASY'], yr[year]['UNCERTAIN'], yr[year]['HARD'])}")
-check("05 摘要 year totals sum to 2515", s["E26"].value == n, f"got {s['E26'].value}")
+check("05 摘要 year totals sum to 2515",
+      s[f"E{YEAR_TOTAL_ROW}"].value == n, f"got {s[f'E{YEAR_TOTAL_ROW}'].value}")
+check("05 摘要 year rows past the data are blank",
+      all(s[f"A{r}"].value in (None, "") for r in range(26, YEAR_TOTAL_ROW)),
+      str([s[f"A{r}"].value for r in range(26, YEAR_TOTAL_ROW)]))
+check("05 摘要 coverage-check cell confirms full coverage",
+      isinstance(s[f"B{YEAR_TOTAL_ROW+1}"].value, str)
+      and "已涵蓋全部" in s[f"B{YEAR_TOTAL_ROW+1}"].value,
+      str(s[f"B{YEAR_TOTAL_ROW+1}"].value))
+
+# the three engines share six raw inputs; Q flags any day where they diverge
+q = [d[f"Q{r}"].value for r in range(FIRST, LAST + 1)]
+same = [i for i in range(n)
+        if all(abs((src_raw[k][c][i] or 0) - (src_raw["A"][c][i] or 0)) < 1e-9
+               if isinstance(src_raw["A"][c][i], (int, float))
+               else src_raw[k][c][i] == src_raw["A"][c][i]
+               for k in "BC" for c in ("E", "F", "G", "H", "I", "K"))]
+check("輸入一致 column agrees with a direct comparison of the six shared inputs",
+      [i for i in range(n) if q[i] == "一致"] == same,
+      f"sheet says {q.count('一致')} 一致, direct comparison says {len(same)}")
+check("每個 輸入不同 day is genuinely different in at least one input",
+      all(i not in same for i in range(n) if q[i] == "輸入不同"),
+      f"{q.count('輸入不同')} flagged")
+
+# B ships an Excel Table on its review log; openpyxl drops it unless copied
+src_b = load_workbook(SRC["B"][0])
+st = src_b["10_審查與修訂紀錄"].tables
+dt = wf["B_10_審查與修訂紀錄"].tables
+check("B's Excel Table (ListObject) survived the merge",
+      set(st) == set(dt) and all(st[k].ref == dt[k].ref
+                                 and len(st[k].tableColumns) == len(dt[k].tableColumns)
+                                 for k in st),
+      f"source={ {k: st[k].ref for k in st} } delivered={ {k: dt[k].ref for k in dt} }")
+src_b.close()
 
 m = wv["06_三方比對"]
 pairs = [("A", "B", 5), ("A", "C", 6), ("B", "C", 7)]

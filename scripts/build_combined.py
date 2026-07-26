@@ -11,7 +11,7 @@ A_ / B_ / C_ prefix, so the combined judgement stays traceable to live source
 formulas rather than pasted numbers.
 """
 import re
-from copy import copy
+from copy import copy, deepcopy
 
 from openpyxl import load_workbook, Workbook
 from openpyxl.comments import Comment
@@ -37,6 +37,7 @@ SCORE_COL = {"A": "AX", "B": "Q", "C": "AG"}
 DAILY = "02A_每日分段"
 
 FIRST, LAST = 5, 2519          # data rows on every 02A sheet
+YEAR_ROWS = 20                 # year rows on 05 (11 years today; the 涵蓋檢查 cell warns if exceeded)
 RUN_ROWS = 400                 # capacity of the run table (301 runs today; N3 warns if exceeded)
 OUT = "/home/user/Easy-Hard/EasyHardMoney_NDX_2026R4.5.3_COMBINED_ABC.xlsx"
 
@@ -174,6 +175,10 @@ def copy_sheet(src_ws, dst_ws, names, prefix):
         dst_ws.freeze_panes = src_ws.freeze_panes
     if src_ws.auto_filter.ref:
         dst_ws.auto_filter.ref = src_ws.auto_filter.ref
+    for tbl in src_ws.tables.values():
+        # ws.tables is the one style carrier openpyxl will not bring across on its
+        # own; B's review log is a real ListObject and loses its banding without it.
+        dst_ws.add_table(deepcopy(tbl))
     dst_ws.sheet_view.showGridLines = src_ws.sheet_view.showGridLines
     return n_formula
 
@@ -198,20 +203,21 @@ title(
     d,
     "整合判區 (A∩B∩C) | 三引擎同時 EASY 才 EASY, 同時 HARD 才 HARD, 其餘一律 UNCERTAIN",
     "N欄=整合判區(唯一結論)。G/I/K欄為A/B/C三引擎原始判區, 由各自原表活算帶入; "
-    "F/H/J欄為三引擎原始加權合成分。P欄逐日核對三表日期對齊。"
-    "Q/R 為灰底輔助欄, 只供 07_整合區間 定位每段區間的起訖列, 不是分析數據。",
+    "F/H/J欄為三引擎原始加權合成分。P欄逐日核對三表日期對齊, Q欄核對三表六項共用原始輸入"
+    "(NDX收盤/距200D/距52週高/廣度/HYOAS/VIX)是否相同。"
+    "R/S 為灰底輔助欄, 只供 07_整合區間 定位每段區間的起訖列, 不是分析數據。",
 )
 head(
     d, 4,
     ["交易日#", "日期", "年份", "週內", "NDX收盤",
      "A分數", "A判區", "B分數", "B判區", "C分數", "C判區",
-     "EASY票數", "HARD票數", "整合判區", "三方一致?", "日期對齊",
+     "EASY票數", "HARD票數", "整合判區", "三方一致?", "日期對齊", "輸入一致?",
      "區間起點(輔助)", "區間編號(輔助)"],
-    [8, 12, 6, 5, 11, 8, 11, 8, 11, 8, 11, 9, 9, 12, 9, 9, 9, 9],
+    [8, 12, 6, 5, 11, 8, 11, 8, 11, 8, 11, 9, 9, 12, 9, 9, 10, 9, 9],
 )
 d.freeze_panes = "C5"
-d.auto_filter.ref = f"A4:P{LAST}"      # the two helper columns stay out of the filter
-for _c in ("Q4", "R4"):
+d.auto_filter.ref = f"A4:Q{LAST}"      # the two helper columns stay out of the filter
+for _c in ("R4", "S4"):
     d[_c].fill = PatternFill("solid", fgColor="808080")
 
 for r in range(FIRST, LAST + 1):
@@ -233,8 +239,15 @@ for r in range(FIRST, LAST + 1):
         "O": f'=IF(AND($G{r}=$I{r},$I{r}=$K{r}),"一致","分歧")',
         "P": (f"=IF(AND('A_{DAILY}'!$B{r}='B_{DAILY}'!$B{r},"
               f"'B_{DAILY}'!$B{r}='C_{DAILY}'!$B{r}),\"OK\",\"MISMATCH\")"),
-        "Q": (f"=1" if r == FIRST else f'=IF($N{r}<>$N{r-1},1,0)'),
-        "R": (f"=1" if r == FIRST else f"=$R{r-1}+$Q{r}"),
+        # The three engines share six raw market inputs; they are not always
+        # identical (A carries HY OAS forward where B and C fall back to a VIX
+        # proxy), and a date-only check would never surface that.
+        "Q": ("=IF(AND(" + ",".join(
+            f"'A_{DAILY}'!${c}{r}='{e}_{DAILY}'!${c}{r}"
+            for c in ("E", "F", "G", "H", "I", "K") for e in ("B", "C")
+        ) + '),"一致","輸入不同")'),
+        "R": (f"=1" if r == FIRST else f'=IF($N{r}<>$N{r-1},1,0)'),
+        "S": (f"=1" if r == FIRST else f"=$S{r-1}+$R{r}"),
     }
     for col, formula in f.items():
         c = d[f"{col}{r}"]
@@ -244,7 +257,7 @@ for r in range(FIRST, LAST + 1):
     d[f"E{r}"].number_format = "#,##0.00"
     for col in ("F", "H", "J"):
         d[f"{col}{r}"].number_format = "0.0"
-    for col in ("D", "G", "I", "K", "L", "M", "N", "O", "P"):
+    for col in ("D", "G", "I", "K", "L", "M", "N", "O", "P", "Q"):
         d[f"{col}{r}"].alignment = CENTER
     d[f"N{r}"].font = F_BOLD
 
@@ -259,6 +272,11 @@ d.conditional_formatting.add(
     f"O{FIRST}:O{LAST}",
     CellIsRule(operator="equal", formula=['"分歧"'],
                fill=PatternFill("solid", bgColor="F2F2F2")),
+)
+d.conditional_formatting.add(
+    f"Q{FIRST}:Q{LAST}",
+    CellIsRule(operator="equal", formula=['"輸入不同"'],
+               fill=PatternFill("solid", bgColor="FFD966")),
 )
 
 
@@ -289,6 +307,13 @@ s["A5"].font = F_KEY
 s["B5"] = (f"=IF(COUNTIF('01_整合判區'!$P${FIRST}:$P${LAST},\"OK\")"
            f"=COUNTA('01_整合判區'!$P${FIRST}:$P${LAST}),\"全部對齊 OK\",\"有 MISMATCH\")")
 s["B5"].font = F_BOLD
+
+s["A6"] = "原始輸入一致檢查 (三表六項共用輸入)"
+s["A6"].font = F_KEY
+s["B6"] = (f'=IF(COUNTIF(\'01_整合判區\'!$Q${FIRST}:$Q${LAST},"輸入不同")=0,"三表輸入完全相同",'
+           f'COUNTIF(\'01_整合判區\'!$Q${FIRST}:$Q${LAST},"輸入不同")&" 個交易日的原始輸入不同 '
+           f'(見 01_整合判區 Q欄)")')
+s["B6"].font = F_BOLD
 
 head(s, 7, ["判區", "整合 (A∩B∩C)", "佔比", "A 引擎", "佔比", "B 引擎", "佔比", "C 引擎", "佔比"])
 for i, zone in enumerate(("EASY", "UNCERTAIN", "HARD")):
@@ -322,27 +347,32 @@ for col in "BDFH":
 s["A13"] = "分年度整合判區日數"
 s["A13"].font = F_KEY
 head(s, 14, ["年份", "EASY", "UNCERTAIN", "HARD", "合計", "EASY%", "", "", ""])
-for i, year in enumerate(range(2016, 2027)):
+# The years come from the data, not a literal list: a hardcoded 2016..2026 would
+# silently drop any day outside that span and leave this table disagreeing with
+# the headline counts eight rows above it.
+for i in range(YEAR_ROWS):
     r = 15 + i
-    s[f"A{r}"] = year
+    s[f"A{r}"] = (f"=MIN({YRNG})" if i == 0
+                  else f'=IF($A15="","",IF($A15+{i}>MAX({YRNG}),"",$A15+{i}))')
     s[f"A{r}"].number_format = "0"
+    blank = f'IF($A{r}="","",'
     for j, zone in enumerate(("EASY", "UNCERTAIN", "HARD")):
         col = get_column_letter(2 + j)
-        s[f"{col}{r}"] = f'=COUNTIFS({YRNG},$A{r},{NRNG},"{zone}")'
+        s[f"{col}{r}"] = f'={blank}COUNTIFS({YRNG},$A{r},{NRNG},"{zone}"))'
         s[f"{col}{r}"].number_format = "#,##0"
-    s[f"E{r}"] = f"=SUM($B{r}:$D{r})"
+    s[f"E{r}"] = f"={blank}SUM($B{r}:$D{r}))"
     s[f"E{r}"].number_format = "#,##0"
-    s[f"F{r}"] = f'=IF($E{r}=0,"",$B{r}/$E{r})'
+    s[f"F{r}"] = f'={blank}IF($E{r}=0,"",$B{r}/$E{r}))'
     s[f"F{r}"].number_format = "0.0%"
     for col in "ABCDEF":
         s[f"{col}{r}"].font = F_BODY
         s[f"{col}{r}"].alignment = CENTER
         s[f"{col}{r}"].border = BOX
-r = 26
+r = 15 + YEAR_ROWS
 s[f"A{r}"] = "合計"
 s[f"A{r}"].font = F_BOLD
 for col in "BCDE":
-    s[f"{col}{r}"] = f"=SUM({col}15:{col}25)"
+    s[f"{col}{r}"] = f"=SUM({col}15:{col}{r-1})"
     s[f"{col}{r}"].number_format = "#,##0"
     s[f"{col}{r}"].font = F_BOLD
     s[f"{col}{r}"].alignment = CENTER
@@ -350,6 +380,12 @@ s[f"F{r}"] = f'=IF($E{r}=0,"",$B{r}/$E{r})'
 s[f"F{r}"].number_format = "0.0%"
 s[f"F{r}"].font = F_BOLD
 s[f"F{r}"].alignment = CENTER
+s[f"A{r+1}"] = "涵蓋檢查"
+s[f"A{r+1}"].font = F_KEY
+s[f"B{r+1}"] = (f'=IF($E{r}=$B$11,"年度表已涵蓋全部 "&$E{r}&" 個交易日",'
+                f'"⚠ 年度表只涵蓋 "&$E{r}&" 日, 判區合計為 "&$B$11&" 日 — '
+                f'有年份超出本表 {YEAR_ROWS} 列容量, 請延長")')
+s[f"B{r+1}"].font = F_BOLD
 
 
 # =========================================================================
@@ -450,7 +486,7 @@ head(p, 4, ["區間#", "區制", "起始日", "結束日", "交易日數", "起�
      [8, 12, 12, 12, 10, 11, 11, 19, 20, 3, 12, 12])
 p.freeze_panes = "A5"
 NPX = f"'01_整合判區'!$E${FIRST}:$E${LAST}"
-RID = f"'01_整合判區'!$R${FIRST}:$R${LAST}"
+RID = f"'01_整合判區'!$S${FIRST}:$S${LAST}"
 p["N1"] = "實際區間數"
 p["N1"].font = F_KEY
 p["N2"] = f"=MAX({RID})"
@@ -483,7 +519,8 @@ for i in range(RUN_ROWS):
     # construction; I measures from the close before it, capturing the move that
     # flipped the regime in the first place.
     p[f"H{r}"] = f'={g}IF($F{r}>0,$G{r}/$F{r}-1,""))'
-    p[f"I{r}"] = f'={g}IF($K{r}>1,$G{r}/INDEX({NPX},$K{r}-1)-1,""))'
+    p[f"I{r}"] = (f'={g}IF(AND($K{r}>1,INDEX({NPX},$K{r}-1)>0),'
+                  f'$G{r}/INDEX({NPX},$K{r}-1)-1,""))')
     p[f"C{r}"].number_format = p[f"D{r}"].number_format = "yyyy-mm-dd"
     p[f"E{r}"].number_format = "#,##0"
     p[f"F{r}"].number_format = p[f"G{r}"].number_format = "#,##0.00"
@@ -539,8 +576,14 @@ rows = [
      "A_01_指標庫 H20/H21 (T4=6、T5=26 兩項權重) 在來源檔 A 中就是以「文字」而非數字儲存。"
      "18 項權重按面值相加為 100, 但該表自己的合計格 H22 用的是 SUM(), 而 SUM() 會跳過文字, "
      "所以 H22 在來源檔 A 與本檔中都顯示 68 (=100-6-26)。A 的合成分公式是逐項相乘, 文字會被"
-     "自動轉型, 因此判區結果不受影響 (已逐日核對與來源檔 A 完全一致)。此處按原樣保留未作更動; "
-     "日後若要改動該權重表, 建議把 H20/H21 改回數值格式, H22 才會顯示 100。"),
+     "自動轉型, 因此在 Excel 及 LibreOffice 預設設定下判區結果不受影響 (已逐日核對與來源檔 A "
+     "完全一致)。但若在 LibreOffice 把「詳細計算設定」改成把數字文字視為零, A 有 210 日判區會變, "
+     "整合判區則有 19 日會變。此處按原樣保留未作更動; 建議把 H20/H21 改回數值格式, "
+     "H22 屆時才會顯示 100, 也可免除這個設定相依。"),
+    ("原檔說明表的表名已過時",
+     "A_00_README / B_00_README / C_00_README 三張是來源檔各自的說明表, 原樣保留。其中列出的"
+     "工作表清單用的是合併前的舊表名 (如「02A_每日分段」), 在本檔中都已加上 A_ / B_ / C_ 前綴; "
+     "查表時請以本檔實際的分頁名為準。"),
 ]
 r = 4
 for k, v in rows:
