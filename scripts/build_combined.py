@@ -68,6 +68,8 @@ def zone_rules(ws, ref):
 
 def head(ws, row, labels, widths=None):
     for i, text in enumerate(labels, start=1):
+        if not text:          # spacer column -- leave it unpainted
+            continue
         c = ws.cell(row=row, column=i, value=text)
         c.font, c.fill, c.alignment, c.border = F_HEAD, FILL_HEAD, CENTER, BOX
     if widths:
@@ -252,7 +254,7 @@ title(s, "整合統計摘要 (全部為活公式, 隨來源表重算)",
 for i, w in enumerate([26, 12, 11, 12, 11, 12, 11, 12, 11], start=1):
     s.column_dimensions[get_column_letter(i)].width = w
 
-s["A4"], s["B4"] = "涵蓋期間", None
+s["A4"] = "涵蓋期間"
 s["A4"].font = F_KEY
 s["B4"] = f"=MIN('01_整合判區'!$B${FIRST}:$B${LAST})"
 s["C4"] = f"=MAX('01_整合判區'!$B${FIRST}:$B${LAST})"
