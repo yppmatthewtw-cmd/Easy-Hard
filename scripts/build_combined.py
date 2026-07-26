@@ -36,7 +36,7 @@ SCORE_COL = {"A": "AX", "B": "Q", "C": "AG"}
 DAILY = "02A_每日分段"
 
 FIRST, LAST = 5, 2519          # data rows on every 02A sheet
-NRUNS = 301                    # contiguous combined-regime runs (verified in build)
+RUN_ROWS = 700                 # capacity of the run table (301 runs today; J3 warns if exceeded)
 OUT = "/home/user/Easy-Hard/EasyHardMoney_NDX_2026R4.5.3_COMBINED_ABC.xlsx"
 
 # --- shared look, taken from the source workbooks -------------------------
@@ -133,19 +133,26 @@ def copy_sheet(src_ws, dst_ws, names, prefix):
             # string starting with "=" to a live formula, so pin the original type.
             if d.data_type != c.data_type:
                 d.data_type = c.data_type
-            if c.has_style:
-                d.font = copy(c.font)
-                d.fill = copy(c.fill)
-                d.border = copy(c.border)
-                d.alignment = copy(c.alignment)
-                d.number_format = c.number_format
-                d.protection = copy(c.protection)
+            # Copy the resolved style even when the source cell carries none: its
+            # font then comes from B/C's own workbook default, which differs from
+            # the merged workbook's default and would otherwise silently change.
+            d.font = copy(c.font)
+            d.fill = copy(c.fill)
+            d.border = copy(c.border)
+            d.alignment = copy(c.alignment)
+            d.number_format = c.number_format
+            d.protection = copy(c.protection)
             if c.comment is not None:
                 d.comment = Comment(c.comment.text, c.comment.author or prefix.rstrip("_"))
 
     for letter, dim in src_ws.column_dimensions.items():
-        n = dst_ws.column_dimensions[letter]
-        n.width, n.hidden, n.bestFit = dim.width, dim.hidden, dim.bestFit
+        # A <col> entry can span several columns; column_dimensions keys only the
+        # first, so expand the span or the trailing columns lose their width.
+        span = range(dim.min, dim.max + 1) if dim.min and dim.max else None
+        letters = [get_column_letter(i) for i in span] if span else [letter]
+        for lt in letters:
+            n = dst_ws.column_dimensions[lt]
+            n.width, n.hidden, n.bestFit = dim.width, dim.hidden, dim.bestFit
     for idx, dim in src_ws.row_dimensions.items():
         n = dst_ws.row_dimensions[idx]
         n.height, n.hidden = dim.height, dim.hidden
@@ -421,27 +428,40 @@ for pair_name, x, y in (("A (列) × B (欄)", GR, IR),
 print("building 07_整合區間 ...")
 p = wb.create_sheet("07_整合區間")
 title(p, "整合判區連續區間 (由 01_整合判區 R欄區間編號活算)",
-      f"共 {NRUNS} 段。每段列出區制、起訖日、交易日數與期間 NDX 報酬。")
+      "每段列出區制、起訖日、交易日數與期間 NDX 報酬。表格列數固定, 但顯示幾段隨 J2 的實際"
+      "區間數自動增減; 若來源改動後段數超出容量, J3 會出現警告。")
 head(p, 4, ["區間#", "區制", "起始日", "結束日", "交易日數", "起始NDX", "結束NDX", "區間報酬%",
             "", "起始列(輔助)", "結束列(輔助)"],
      [8, 12, 12, 12, 10, 11, 11, 11, 3, 12, 12])
 p.freeze_panes = "A5"
-p.cell(row=3, column=10, value="J/K 為輔助欄, 只算一次 MATCH/COUNTIF 供左側各欄引用").font = F_NOTE
 RID = f"'01_整合判區'!$R${FIRST}:$R${LAST}"
-for i in range(NRUNS):
+p["J1"] = "實際區間數"
+p["J1"].font = F_KEY
+p["J2"] = f"=MAX({RID})"
+p["J2"].font = F_BOLD
+p["J3"] = (f'=IF($J$2>{RUN_ROWS},"⚠ 區間數超出本表 {RUN_ROWS} 列容量, 請延長",'
+           f'"表格容量 {RUN_ROWS} 列, 足夠")')
+p["J3"].font = F_NOTE
+p.cell(row=3, column=1,
+       value="J/K 為輔助欄: 每段只算一次 MATCH/COUNTIF 供左側各欄引用").font = F_NOTE
+for i in range(RUN_ROWS):
     r = 5 + i
-    p[f"A{r}"] = i + 1
-    # Resolve the run's first/last row once, then reuse -- keeps the sheet to two
-    # full-column scans per run instead of nine.
-    p[f"J{r}"] = f"=MATCH($A{r},{RID},0)"
-    p[f"K{r}"] = f"=$J{r}+COUNTIF({RID},$A{r})-1"
-    p[f"B{r}"] = f"=INDEX('01_整合判區'!$N${FIRST}:$N${LAST},$J{r})"
-    p[f"C{r}"] = f"=INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$J{r})"
-    p[f"D{r}"] = f"=INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$K{r})"
-    p[f"E{r}"] = f"=$K{r}-$J{r}+1"
-    p[f"F{r}"] = f"=INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$J{r})"
-    p[f"G{r}"] = f"=INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$K{r})"
-    p[f"H{r}"] = f'=IF($F{r}>0,$G{r}/$F{r}-1,"")'
+    idx = i + 1
+    # Rows past the live run count blank themselves out, so the table tracks the
+    # real number of runs instead of being pinned to however many exist today.
+    p[f"A{r}"] = f'=IF({idx}>$J$2,"",{idx})'
+    g = f'IF($A{r}="","",'
+    # Resolve each run's first/last row once, then reuse -- two full-column scans
+    # per run instead of nine.
+    p[f"J{r}"] = f"={g}MATCH($A{r},{RID},0))"
+    p[f"K{r}"] = f"={g}$J{r}+COUNTIF({RID},$A{r})-1)"
+    p[f"B{r}"] = f"={g}INDEX('01_整合判區'!$N${FIRST}:$N${LAST},$J{r}))"
+    p[f"C{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$J{r}))"
+    p[f"D{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$K{r}))"
+    p[f"E{r}"] = f"={g}$K{r}-$J{r}+1)"
+    p[f"F{r}"] = f"={g}INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$J{r}))"
+    p[f"G{r}"] = f"={g}INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$K{r}))"
+    p[f"H{r}"] = f'={g}IF($F{r}>0,$G{r}/$F{r}-1,""))'
     p[f"C{r}"].number_format = p[f"D{r}"].number_format = "yyyy-mm-dd"
     p[f"E{r}"].number_format = "#,##0"
     p[f"F{r}"].number_format = p[f"G{r}"].number_format = "#,##0.00"
@@ -450,7 +470,7 @@ for i in range(NRUNS):
         p[f"{col}{r}"].font = F_BODY
     for col in ("A", "B", "C", "D", "E", "J", "K"):
         p[f"{col}{r}"].alignment = CENTER
-zone_rules(p, f"B5:B{4 + NRUNS}")
+zone_rules(p, f"B5:B{4 + RUN_ROWS}")
 
 
 # =========================================================================
@@ -485,8 +505,15 @@ rows = [
      "00_README_整合 | 01_整合判區(主表, 2515日) | 05_整合統計摘要 | 06_三方比對 | 07_整合區間 | "
      "A_*(6張, Fable原檔) | B_*(9張, Sol原檔) | C_*(7張, Grok原檔)"),
     ("顏色", "綠=EASY | 黃=UNCERTAIN | 紅=HARD (沿用三個來源檔的原有配色)"),
-    ("重算提醒",
-     "全檔為活公式, 不含寫死結果。修改任一來源表的輸入格, 01/05/06/07 四張整合表會一併更新。"),
+    ("哪些會自動重算",
+     "四張整合表(01/05/06/07)全部為活公式, 不含寫死結果。來源方面: A 原檔帶 65,479 條活公式、"
+     "B 原檔帶 23,634 條, 改動它們的輸入格會一路更新到整合判區; 但 C 原檔本身就只有數值、"
+     "沒有任何公式(0條), 所以 C 判區欄是資料而非公式 — 要改 C 的判區須直接編輯 "
+     "C_02A_每日分段 的 AH 欄。"),
+    ("承襲自原檔的已知小問題",
+     "A_01_指標庫 H20/H21 (T4=6、T5=26 兩項權重) 在來源檔 A 中就是以「文字」而非數字儲存"
+     "(權重合計仍為 100)。此處按原樣保留未作更動; Excel 運算時會自動轉型, 結果與原檔一致, "
+     "但日後若要改動該權重表, 建議一併改回數值格式。"),
 ]
 r = 4
 for k, v in rows:
