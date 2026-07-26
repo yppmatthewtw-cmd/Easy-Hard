@@ -430,45 +430,53 @@ p = wb.create_sheet("07_整合區間")
 title(p, "整合判區連續區間 (由 01_整合判區 R欄區間編號活算)",
       "每段列出區制、起訖日、交易日數與期間 NDX 報酬。表格列數固定, 但顯示幾段隨 J2 的實際"
       "區間數自動增減; 若來源改動後段數超出容量, J3 會出現警告。")
-head(p, 4, ["區間#", "區制", "起始日", "結束日", "交易日數", "起始NDX", "結束NDX", "區間報酬%",
+head(p, 4, ["區間#", "區制", "起始日", "結束日", "交易日數", "起始NDX", "結束NDX",
+            "期內報酬%(首收→末收)", "含首日報酬%(前收→末收)",
             "", "起始列(輔助)", "結束列(輔助)"],
-     [8, 12, 12, 12, 10, 11, 11, 11, 3, 12, 12])
+     [8, 12, 12, 12, 10, 11, 11, 19, 20, 3, 12, 12])
 p.freeze_panes = "A5"
+NPX = f"'01_整合判區'!$E${FIRST}:$E${LAST}"
 RID = f"'01_整合判區'!$R${FIRST}:$R${LAST}"
-p["J1"] = "實際區間數"
-p["J1"].font = F_KEY
-p["J2"] = f"=MAX({RID})"
-p["J2"].font = F_BOLD
-p["J3"] = (f'=IF($J$2>{RUN_ROWS},"⚠ 區間數超出本表 {RUN_ROWS} 列容量, 請延長",'
+p["N1"] = "實際區間數"
+p["N1"].font = F_KEY
+p["N2"] = f"=MAX({RID})"
+p["N2"].font = F_BOLD
+p["N3"] = (f'=IF($N$2>{RUN_ROWS},"⚠ 區間數超出本表 {RUN_ROWS} 列容量, 請延長",'
            f'"表格容量 {RUN_ROWS} 列, 足夠")')
-p["J3"].font = F_NOTE
+p["N3"].font = F_NOTE
+p.column_dimensions["N"].width = 22
 p.cell(row=3, column=1,
-       value="J/K 為輔助欄: 每段只算一次 MATCH/COUNTIF 供左側各欄引用").font = F_NOTE
+       value="H欄=判區成立後才進場的報酬(單日區間必為0%); I欄=含觸發當日跳空的報酬。"
+             "K/L 為輔助欄, 每段只算一次 MATCH/COUNTIF 供左側各欄引用。").font = F_NOTE
 for i in range(RUN_ROWS):
     r = 5 + i
     idx = i + 1
     # Rows past the live run count blank themselves out, so the table tracks the
     # real number of runs instead of being pinned to however many exist today.
-    p[f"A{r}"] = f'=IF({idx}>$J$2,"",{idx})'
+    p[f"A{r}"] = f'=IF({idx}>$N$2,"",{idx})'
     g = f'IF($A{r}="","",'
     # Resolve each run's first/last row once, then reuse -- two full-column scans
     # per run instead of nine.
-    p[f"J{r}"] = f"={g}MATCH($A{r},{RID},0))"
-    p[f"K{r}"] = f"={g}$J{r}+COUNTIF({RID},$A{r})-1)"
-    p[f"B{r}"] = f"={g}INDEX('01_整合判區'!$N${FIRST}:$N${LAST},$J{r}))"
-    p[f"C{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$J{r}))"
-    p[f"D{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$K{r}))"
-    p[f"E{r}"] = f"={g}$K{r}-$J{r}+1)"
-    p[f"F{r}"] = f"={g}INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$J{r}))"
-    p[f"G{r}"] = f"={g}INDEX('01_整合判區'!$E${FIRST}:$E${LAST},$K{r}))"
+    p[f"K{r}"] = f"={g}MATCH($A{r},{RID},0))"
+    p[f"L{r}"] = f"={g}$K{r}+COUNTIF({RID},$A{r})-1)"
+    p[f"B{r}"] = f"={g}INDEX('01_整合判區'!$N${FIRST}:$N${LAST},$K{r}))"
+    p[f"C{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$K{r}))"
+    p[f"D{r}"] = f"={g}INDEX('01_整合判區'!$B${FIRST}:$B${LAST},$L{r}))"
+    p[f"E{r}"] = f"={g}$L{r}-$K{r}+1)"
+    p[f"F{r}"] = f"={g}INDEX({NPX},$K{r}))"
+    p[f"G{r}"] = f"={g}INDEX({NPX},$L{r}))"
+    # H measures from the regime's own first close, so a one-day regime is 0% by
+    # construction; I measures from the close before it, capturing the move that
+    # flipped the regime in the first place.
     p[f"H{r}"] = f'={g}IF($F{r}>0,$G{r}/$F{r}-1,""))'
+    p[f"I{r}"] = f'={g}IF($K{r}>1,$G{r}/INDEX({NPX},$K{r}-1)-1,""))'
     p[f"C{r}"].number_format = p[f"D{r}"].number_format = "yyyy-mm-dd"
     p[f"E{r}"].number_format = "#,##0"
     p[f"F{r}"].number_format = p[f"G{r}"].number_format = "#,##0.00"
-    p[f"H{r}"].number_format = "0.00%"
-    for col in ("A", "B", "C", "D", "E", "F", "G", "H", "J", "K"):
+    p[f"H{r}"].number_format = p[f"I{r}"].number_format = "0.00%"
+    for col in ("A", "B", "C", "D", "E", "F", "G", "H", "I", "K", "L"):
         p[f"{col}{r}"].font = F_BODY
-    for col in ("A", "B", "C", "D", "E", "J", "K"):
+    for col in ("A", "B", "C", "D", "E", "K", "L"):
         p[f"{col}{r}"].alignment = CENTER
 zone_rules(p, f"B5:B{4 + RUN_ROWS}")
 
@@ -511,9 +519,11 @@ rows = [
      "沒有任何公式(0條), 所以 C 判區欄是資料而非公式 — 要改 C 的判區須直接編輯 "
      "C_02A_每日分段 的 AH 欄。"),
     ("承襲自原檔的已知小問題",
-     "A_01_指標庫 H20/H21 (T4=6、T5=26 兩項權重) 在來源檔 A 中就是以「文字」而非數字儲存"
-     "(權重合計仍為 100)。此處按原樣保留未作更動; Excel 運算時會自動轉型, 結果與原檔一致, "
-     "但日後若要改動該權重表, 建議一併改回數值格式。"),
+     "A_01_指標庫 H20/H21 (T4=6、T5=26 兩項權重) 在來源檔 A 中就是以「文字」而非數字儲存。"
+     "18 項權重按面值相加為 100, 但該表自己的合計格 H22 用的是 SUM(), 而 SUM() 會跳過文字, "
+     "所以 H22 在來源檔 A 與本檔中都顯示 68 (=100-6-26)。A 的合成分公式是逐項相乘, 文字會被"
+     "自動轉型, 因此判區結果不受影響 (已逐日核對與來源檔 A 完全一致)。此處按原樣保留未作更動; "
+     "日後若要改動該權重表, 建議把 H20/H21 改回數值格式, H22 才會顯示 100。"),
 ]
 r = 4
 for k, v in rows:
